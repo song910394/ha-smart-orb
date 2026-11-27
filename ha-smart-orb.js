@@ -407,6 +407,96 @@ const ORB_STYLE = `
     color: rgba(226, 232, 240, 0.92);
   }
 
+  /* Live Voice Listening Waveform & Quick Input */
+  .listen-widget {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 4px 0 2px;
+  }
+
+  .voice-bars {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    height: 30px;
+  }
+
+  .voice-bar {
+    width: 4px;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--cyan);
+    box-shadow: 0 0 10px rgba(103, 232, 249, 0.75);
+    animation: voiceWave 0.95s ease-in-out infinite;
+  }
+  .voice-bar:nth-child(2) { animation-delay: 0.12s; }
+  .voice-bar:nth-child(3) { animation-delay: 0.24s; }
+  .voice-bar:nth-child(4) { animation-delay: 0.36s; }
+  .voice-bar:nth-child(5) { animation-delay: 0.18s; }
+
+  @keyframes voiceWave {
+    0%, 100% { height: 8px; opacity: 0.55; }
+    50% { height: 28px; opacity: 1; }
+  }
+
+  .listen-hint {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+
+  .assist-input-form {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    margin-top: 2px;
+  }
+
+  .assist-input-form input {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    background: rgba(15, 23, 42, 0.78);
+    color: var(--text-main);
+    font: inherit;
+    font-size: 0.88rem;
+  }
+  .assist-input-form input:focus {
+    outline: 1px solid var(--cyan);
+    border-color: var(--cyan);
+  }
+
+  .assist-input-form button {
+    padding: 8px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(103, 232, 249, 0.45);
+    background: rgba(103, 232, 249, 0.18);
+    color: #ffffff;
+    font: inherit;
+    font-size: 0.82rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .assist-input-form button:hover {
+    background: rgba(103, 232, 249, 0.32);
+  }
+
+  .dock-btn.mic-btn {
+    border-color: rgba(103, 232, 249, 0.42);
+    color: #cffafe;
+  }
+  .dock-btn.mic-btn.listening {
+    background: rgba(103, 232, 249, 0.28);
+    border-color: var(--cyan);
+    color: #ffffff;
+    box-shadow: 0 0 14px rgba(103, 232, 249, 0.5);
+  }
+
   /* Subtle Corner Status & Controls */
   .status-pill {
     position: absolute;
@@ -707,9 +797,10 @@ ORB_TEMPLATE.innerHTML = `
       </div>
 
       <div class="control-dock" id="control-dock">
+        <button type="button" class="dock-btn mic-btn" id="mic-btn" data-action="mic" aria-pressed="false">🎤 語音</button>
         <button type="button" class="dock-btn" data-action="light">1 開燈</button>
         <button type="button" class="dock-btn" data-action="weather">2 天氣</button>
-        <button type="button" class="dock-btn" data-action="general">3 語音</button>
+        <button type="button" class="dock-btn" data-action="general">3 狀態</button>
         <button type="button" class="dock-btn" data-action="idle">待機</button>
         <button type="button" class="dock-btn" id="drawer-toggle" aria-expanded="false" aria-controls="device-drawer">設備</button>
       </div>
@@ -908,6 +999,10 @@ class HaSmartOrb extends HTMLElement {
     this.drawerListEl = this.shadowRoot.getElementById('drawer-list');
     this.noResultsEl = this.shadowRoot.getElementById('no-results');
     this.motionToggleEl = this.shadowRoot.getElementById('motion-toggle');
+    this.micBtnEl = this.shadowRoot.getElementById('mic-btn');
+    this.isListening = false;
+    this.recognition = null;
+    this.lastAssistEventAt = 0;
 
     this.width = 0;
     this.height = 0;
@@ -1054,7 +1149,8 @@ class HaSmartOrb extends HTMLElement {
       const btn = e.target.closest('button');
       if (!btn) return;
       const action = btn.dataset.action;
-      if (action === 'light') this.triggerDemoLight();
+      if (action === 'mic') this.startVoiceAssist();
+      else if (action === 'light') this.triggerDemoLight();
       else if (action === 'weather') this.triggerDemoWeather();
       else if (action === 'general') this.triggerDemoGeneral();
       else if (action === 'idle') this.hideAssistCard();
@@ -1081,6 +1177,7 @@ class HaSmartOrb extends HTMLElement {
       if (e.key === '1') this.triggerDemoLight();
       else if (e.key === '2') this.triggerDemoWeather();
       else if (e.key === '3') this.triggerDemoGeneral();
+      else if (e.key === 'v' || e.key === 'V') this.startVoiceAssist();
       else if (e.key === 'Escape' || e.key === '0') {
         this.hideAssistCard();
         this._setDrawerOpen(false);
@@ -1219,6 +1316,7 @@ class HaSmartOrb extends HTMLElement {
     document.removeEventListener('visibilitychange', this._onVisibilityChange);
     this.resizeObserver?.disconnect();
     this.visibilityObserver?.disconnect();
+    this._stopSpeechRecognition();
     this._stopLoop();
     if (typeof this.unsubAssist === 'function') {
       try { this.unsubAssist(); } catch {}
@@ -1234,6 +1332,7 @@ class HaSmartOrb extends HTMLElement {
     this.subscribedConn = conn;
     try {
       this.unsubAssist = await conn.subscribeEvents((ev) => {
+        this.lastAssistEventAt = performance.now();
         this.showAssistCard(ev?.data || {});
       }, this.assistEventName);
     } catch {
@@ -1932,6 +2031,8 @@ class HaSmartOrb extends HTMLElement {
 
   hideAssistCard() {
     clearTimeout(this.hideTimer);
+    this._stopSpeechRecognition();
+    try { window.speechSynthesis?.cancel(); } catch {}
     this.assistCardEl.classList.remove('visible');
     this.stageEl.classList.remove('assist-active');
     this.targetCenterYOffset = 0;
@@ -1939,6 +2040,217 @@ class HaSmartOrb extends HTMLElement {
     if (this.demoLightDelta !== 0) {
       this.demoLightDelta = 0;
       this._updatePinValues();
+    }
+  }
+
+  /* ============================================================
+   * Built-in Live HA Assist Voice & Command Input
+   * ============================================================ */
+  _stopSpeechRecognition() {
+    this.isListening = false;
+    if (this.micBtnEl) {
+      this.micBtnEl.classList.remove('listening');
+      this.micBtnEl.setAttribute('aria-pressed', 'false');
+    }
+    if (this.recognition) {
+      try { this.recognition.onresult = null; this.recognition.onerror = null; this.recognition.onend = null; this.recognition.stop(); } catch {}
+      this.recognition = null;
+    }
+  }
+
+  startVoiceAssist() {
+    if (this.isListening) {
+      this._stopSpeechRecognition();
+      return;
+    }
+    clearTimeout(this.hideTimer);
+    this._fireWakeBeam();
+    this.spawnPulse(6);
+
+    this.targetCenterYOffset = -Math.min(this.height * 0.11, 92);
+    this.targetSphereScale = 0.89;
+    this.stageEl.classList.add('assist-active');
+
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const hasSpeech = Boolean(SpeechRec);
+
+    this.assistSourceEl.textContent = hasSpeech ? 'AI / LISTENING...' : 'AI / ASSIST INPUT';
+    clearInterval(this.typeTimer);
+    this.assistTranscriptEl.textContent = hasSpeech ? '請說出指令，例如「今天天氣如何」或「打開廚房主燈」...' : '請輸入語音指令並按送出';
+
+    this.assistBodyEl.innerHTML = `
+      <div class="listen-widget">
+        ${hasSpeech ? '<div class="voice-bars" id="voice-bars"><span class="voice-bar"></span><span class="voice-bar"></span><span class="voice-bar"></span><span class="voice-bar"></span><span class="voice-bar"></span></div>' : ''}
+        <div class="listen-hint" id="listen-hint">${hasSpeech ? '正在聆聽語音，也可直接輸入指令送出' : '此瀏覽器不支援內建語音辨識，請直接輸入指令'}</div>
+        <form class="assist-input-form" id="assist-input-form">
+          <input type="text" id="assist-text-input" placeholder="例如：今天天氣如何 / 餐廳環境如何 / 打開廚房主燈" autocomplete="off" />
+          <button type="submit">送出</button>
+        </form>
+      </div>
+    `;
+
+    this.assistCardEl.classList.add('visible');
+
+    const form = this.shadowRoot.getElementById('assist-input-form');
+    const input = this.shadowRoot.getElementById('assist-text-input');
+    form?.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const q = input?.value?.trim();
+      if (!q) return;
+      this._stopSpeechRecognition();
+      this.sendAssistCommand(q, false);
+    });
+
+    if (!hasSpeech) {
+      input?.focus();
+      return;
+    }
+
+    try {
+      const rec = new SpeechRec();
+      rec.lang = this._hass?.language?.startsWith('en') ? 'en-US' : 'zh-TW';
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+      rec.continuous = false;
+
+      let finalTranscript = '';
+      this.recognition = rec;
+      this.isListening = true;
+      this.micBtnEl?.classList.add('listening');
+      this.micBtnEl?.setAttribute('aria-pressed', 'true');
+
+      rec.onresult = (event) => {
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i += 1) {
+          const piece = event.results[i][0]?.transcript || '';
+          if (event.results[i].isFinal) finalTranscript += piece;
+          else interim += piece;
+        }
+        const preview = (finalTranscript || interim).trim();
+        if (preview) this.assistTranscriptEl.textContent = `"${preview}"`;
+      };
+
+      rec.onerror = (event) => {
+        this._stopSpeechRecognition();
+        const hint = this.shadowRoot.getElementById('listen-hint');
+        const bars = this.shadowRoot.getElementById('voice-bars');
+        if (bars) bars.style.display = 'none';
+        if (hint) {
+          hint.textContent = event.error === 'not-allowed'
+            ? '麥克風權限未開啟，請改用下方文字輸入或允許麥克風權限'
+            : `語音辨識未取得聲音（${event.error}），可直接輸入指令`;
+        }
+        input?.focus();
+      };
+
+      rec.onend = () => {
+        const spoken = finalTranscript.trim();
+        this._stopSpeechRecognition();
+        if (spoken) {
+          this.sendAssistCommand(spoken, true);
+        }
+      };
+
+      rec.start();
+    } catch {
+      this._stopSpeechRecognition();
+      input?.focus();
+    }
+  }
+
+  async sendAssistCommand(text, speakReply = false) {
+    const cleanText = String(text || '').trim();
+    if (!cleanText) return;
+    clearTimeout(this.hideTimer);
+
+    const startedAt = performance.now();
+    this.assistSourceEl.textContent = 'AI / PROCESSING...';
+    this.assistTranscriptEl.textContent = `"${cleanText}"`;
+    this.assistBodyEl.innerHTML = `
+      <div class="general-widget">
+        <div class="general-badge">✦</div>
+        <div class="general-text">正在透過 Home Assistant Assist 處理指令...</div>
+      </div>
+    `;
+    this.assistCardEl.classList.add('visible');
+    this.spawnPulse(4);
+
+    if (typeof this._hass?.callWS !== 'function') {
+      this.showAssistCard({
+        source: 'AI / DEMO',
+        transcript: cleanText,
+        type: 'general',
+        payload: { message: '目前為本機 Demo 模式，連上 Home Assistant 後即可即時控制家中設備。' },
+      });
+      return;
+    }
+
+    try {
+      const result = await this._hass.callWS({
+        type: 'conversation/process',
+        text: cleanText,
+        language: this._hass.language || 'zh-Hant',
+      });
+
+      const speech = result?.response?.speech?.plain?.speech || '已完成指令。';
+      const successList = result?.response?.data?.success || [];
+
+      if (speakReply && speech && 'speechSynthesis' in window) {
+        try {
+          window.speechSynthesis.cancel();
+          const utter = new SpeechSynthesisUtterance(speech);
+          utter.lang = 'zh-TW';
+          window.speechSynthesis.speak(utter);
+        } catch {}
+      }
+
+      // If an HA Automation already pushed a specialized assist_dashboard_event during this call, keep it!
+      if (this.lastAssistEventAt >= startedAt) {
+        return;
+      }
+
+      // Auto-select specialized visual card from Assist response
+      const lightTarget = successList.find((item) => {
+        const id = String(item?.id || '');
+        return id.startsWith('light.') || (id.startsWith('switch.') && /light|燈|kai_guan/i.test(`${id} ${item?.name || ''}`));
+      });
+
+      if (lightTarget) {
+        const st = this._hass.states?.[lightTarget.id];
+        const isOff = st ? st.state === 'off' : /關|off/i.test(cleanText);
+        const bri = st?.attributes?.brightness != null ? Math.round((st.attributes.brightness / 255) * 100) : null;
+        this.showAssistCard({
+          source: 'AI / ASSIST',
+          transcript: cleanText,
+          type: 'light',
+          highlight_entity: lightTarget.id,
+          payload: {
+            name: lightTarget.name || st?.attributes?.friendly_name || lightTarget.id,
+            state: isOff ? 'off' : 'on',
+            brightness: bri,
+          },
+        });
+        return;
+      }
+
+      if (/天氣|氣象|預報|weather/i.test(cleanText)) {
+        await this.triggerDemoWeather(cleanText);
+        return;
+      }
+
+      this.showAssistCard({
+        source: 'AI / ASSIST',
+        transcript: cleanText,
+        type: 'general',
+        payload: { message: speech },
+      });
+    } catch (err) {
+      this.showAssistCard({
+        source: 'AI / ASSIST',
+        transcript: cleanText,
+        type: 'general',
+        payload: { message: `無法完成語音指令：${err?.message || '請確認 HA Assist 設定'}` },
+      });
     }
   }
 
@@ -1970,7 +2282,7 @@ class HaSmartOrb extends HTMLElement {
     });
   }
 
-  async triggerDemoWeather() {
+  async triggerDemoWeather(customTranscript = null) {
     const weatherId = this._resolveWeatherEntity();
     const st = weatherId ? this._hass?.states?.[weatherId] : null;
     if (weatherId) {
@@ -2055,7 +2367,7 @@ class HaSmartOrb extends HTMLElement {
 
     this.showAssistCard({
       source: 'AI / LIVING ROOM',
-      transcript: "What's the weather like today?",
+      transcript: customTranscript || "What's the weather like today?",
       type: 'weather',
       payload,
     });
