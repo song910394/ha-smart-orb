@@ -1,0 +1,70 @@
+# Home Assistant Automation 範例：觸發智慧球體底部 Assist 動態卡片
+# 事件名稱預設為 assist_dashboard_event（可在卡片 YAML 用 assist_event 覆寫）
+
+# 範例 1：當「1F 廚房主燈」被打開時，在智慧球體彈出燈光發光卡片
+alias: 智慧球體 - 廚房主燈開啟通知
+trigger:
+  - platform: state
+    entity_id: switch.zhi_neng_kai_guan_4_switch
+    to: "on"
+action:
+  - event: assist_dashboard_event
+    event_data:
+      source: "AI / 1F 廚房"
+      transcript: "打開廚房主燈"
+      type: "light"
+      highlight_entity: "switch.zhi_neng_kai_guan_4_switch"
+      payload:
+        name: "1F 廚房主燈"
+        state: "on"
+
+---
+
+# 範例 2：語音 / 腳本觸發即時天氣預報卡片（讀取本宅 weather.forecast_jia）
+alias: 智慧球體 - 顯示今日天氣預報
+sequence:
+  - service: weather.get_forecasts
+    target:
+      entity_id: weather.forecast_jia
+    data:
+      type: daily
+    response_variable: daily_weather
+  - event: assist_dashboard_event
+    event_data:
+      source: "AI / LIVING ROOM"
+      transcript: "今天天氣如何？"
+      type: "weather"
+      highlight_entity: "weather.forecast_jia"
+      payload:
+        conditionKey: "{{ states('weather.forecast_jia') }}"
+        condition: "{{ states('weather.forecast_jia') | upper }}"
+        temp: "{{ state_attr('weather.forecast_jia', 'temperature') | round(0) }}°"
+        high: "{{ daily_weather['weather.forecast_jia'].forecast[0].temperature | round(0) }}°"
+        low: "{{ daily_weather['weather.forecast_jia'].forecast[0].templow | round(0) }}°"
+        rain: "{{ state_attr('weather.forecast_jia', 'humidity') }}%"
+        rainLabel: "Humidity"
+        wind: "{{ state_attr('weather.forecast_jia', 'wind_speed') | round(0) }} km/h"
+        forecast:
+          - day: "Day 1"
+            icon: "⛅"
+            temp: "{{ daily_weather['weather.forecast_jia'].forecast[0].temperature | round(0) }}°"
+          - day: "Day 2"
+            icon: "🌦️"
+            temp: "{{ daily_weather['weather.forecast_jia'].forecast[1].temperature | round(0) }}°"
+          - day: "Day 3"
+            icon: "⛅"
+            temp: "{{ daily_weather['weather.forecast_jia'].forecast[2].temperature | round(0) }}°"
+          - day: "Day 4"
+            icon: "☀️"
+            temp: "{{ daily_weather['weather.forecast_jia'].forecast[3].temperature | round(0) }}°"
+
+---
+
+# 範例 3：通用語音文字回應卡片（可在開發者工具 -> 事件 直接測試）
+# 事件類型：assist_dashboard_event
+# 事件資料：
+# source: "AI / LIVING ROOM"
+# transcript: "幫我確認餐廳溫濕度"
+# type: "general"
+# payload:
+#   message: "目前餐廳溫度 22.6°C、濕度 64%，小清除濕機運轉中。"
