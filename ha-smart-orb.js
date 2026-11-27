@@ -12,7 +12,6 @@ const ORB_STYLE = `
     display: block;
     width: 100%;
     min-width: 0;
-    container-type: inline-size;
   }
 
   * {
@@ -25,8 +24,9 @@ const ORB_STYLE = `
     display: flex;
     flex-direction: column;
     width: 100%;
+    height: calc(100vh - var(--header-height, 56px));
     height: calc(100dvh - var(--header-height, 56px));
-    min-height: 620px;
+    min-height: 460px;
     overflow: hidden;
     border: none;
     border-radius: 0;
@@ -42,7 +42,8 @@ const ORB_STYLE = `
     flex: 1 1 auto;
     width: 100%;
     height: 100%;
-    min-height: 620px;
+    min-height: 460px;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -78,7 +79,7 @@ const ORB_STYLE = `
   }
 
   .clock-time {
-    font-size: clamp(3rem, 8.2cqi, 5.4rem);
+    font-size: clamp(2.8rem, 8vw, 5.4rem);
     font-weight: 200;
     letter-spacing: 0.04em;
     line-height: 1.05;
@@ -89,7 +90,7 @@ const ORB_STYLE = `
 
   .clock-date {
     margin-top: 8px;
-    font-size: clamp(0.9rem, 2.1cqi, 1.2rem);
+    font-size: clamp(0.88rem, 2.2vw, 1.2rem);
     font-weight: 300;
     letter-spacing: 0.08em;
     color: var(--text-muted);
@@ -132,8 +133,9 @@ const ORB_STYLE = `
   .assist-wrapper {
     position: relative;
     z-index: 20;
-    width: min(90cqi, 460px);
-    margin-bottom: clamp(46px, 6.2vh, 66px);
+    width: min(92vw, 460px);
+    max-width: calc(100% - 20px);
+    margin-bottom: clamp(48px, 6.2vh, 66px);
     pointer-events: none;
   }
 
@@ -752,14 +754,40 @@ const ORB_STYLE = `
     color: var(--text-muted);
   }
 
-  @container (max-width: 560px) {
-    .clock-header { margin-top: clamp(18px, 4.2vh, 38px); }
-    .clock-time { font-size: clamp(2.8rem, 13cqi, 4.2rem); }
-    .clock-date { font-size: clamp(0.84rem, 3.6cqi, 1.04rem); }
-    .assist-wrapper { width: min(92cqi, 420px); margin-bottom: 54px; }
-    .assist-card { padding: 15px 16px 17px; }
+  @media (max-width: 640px) {
+    .clock-header { margin-top: clamp(14px, 3.4vh, 32px); }
+    .clock-time { font-size: clamp(2.6rem, 13vw, 4rem); }
+    .clock-date { font-size: clamp(0.82rem, 3.6vw, 1.02rem); margin-top: 5px; }
+    .assist-wrapper {
+      width: calc(100% - 20px);
+      max-width: 440px;
+      margin-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+    }
+    .assist-card { padding: 14px 15px 16px; border-radius: 16px; }
+    .assist-transcript { font-size: 0.94rem; margin-bottom: 10px; }
+    .weather-temp { font-size: 1.95rem; }
+    .weather-stats { font-size: 0.72rem; }
     .status-pill { display: none; }
-    .control-dock { right: 50%; transform: translateX(50%); bottom: 10px; opacity: 0.55; }
+    .control-dock {
+      left: 10px;
+      right: 10px;
+      bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+      transform: none;
+      flex-wrap: wrap;
+      justify-content: center;
+      border-radius: 16px;
+      padding: 6px;
+      gap: 5px;
+      opacity: 0.82;
+    }
+    .dock-btn { font-size: 0.72rem; padding: 6px 9px; }
+    .device-drawer {
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      bottom: calc(92px + env(safe-area-inset-bottom, 0px));
+      width: auto;
+    }
   }
 `;
 
@@ -1188,6 +1216,7 @@ class HaSmartOrb extends HTMLElement {
       if (document.hidden) this._stopLoop();
       else this._startLoop();
     };
+    this._onWinResize = () => this._resizeCanvas();
   }
 
   _setDrawerOpen(open) {
@@ -1292,6 +1321,8 @@ class HaSmartOrb extends HTMLElement {
     this._updateClock();
     this.clockTimer = setInterval(() => this._updateClock(), 10000);
     window.addEventListener('keydown', this._onKeyDown);
+    window.addEventListener('resize', this._onWinResize);
+    window.addEventListener('orientationchange', this._onWinResize);
     document.addEventListener('visibilitychange', this._onVisibilityChange);
 
     this.resizeObserver = new ResizeObserver(() => this._resizeCanvas());
@@ -1313,6 +1344,8 @@ class HaSmartOrb extends HTMLElement {
     clearTimeout(this.hideTimer);
     clearInterval(this.typeTimer);
     window.removeEventListener('keydown', this._onKeyDown);
+    window.removeEventListener('resize', this._onWinResize);
+    window.removeEventListener('orientationchange', this._onWinResize);
     document.removeEventListener('visibilitychange', this._onVisibilityChange);
     this.resizeObserver?.disconnect();
     this.visibilityObserver?.disconnect();
@@ -1655,14 +1688,18 @@ class HaSmartOrb extends HTMLElement {
 
   _resizeCanvas() {
     const rect = this.stageEl.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
+    const fallbackW = window.innerWidth || 390;
+    const fallbackH = Math.max(460, (window.innerHeight || 780) - 56);
+    this.width = rect.width > 40 ? rect.width : fallbackW;
+    this.height = rect.height > 120 ? rect.height : fallbackH;
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.width = rect.width;
-    this.height = rect.height;
     this.canvas.width = Math.max(1, Math.floor(this.width * this.dpr));
     this.canvas.height = Math.max(1, Math.floor(this.height * this.dpr));
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.sphereRadius = Math.min(this.width * 0.34, this.height * 0.25, 225);
+    const isMobile = this.width < 520;
+    this.sphereRadius = isMobile
+      ? Math.min(this.width * 0.36, this.height * 0.22, 165)
+      : Math.min(this.width * 0.34, this.height * 0.25, 225);
   }
 
   _startLoop() {
@@ -1869,7 +1906,8 @@ class HaSmartOrb extends HTMLElement {
       const depthNorm = Math.max(0, Math.min(1, (proj.z + 1.1) / 2.2));
       const isHighlighted = (pin.id === this.highlightPinId && now < this.highlightUntil);
       const alpha = isHighlighted ? 1 : (0.20 + depthNorm * 0.80);
-      const fontSize = Math.round((11.5 + depthNorm * 2.5) * (isHighlighted ? 1.12 : 1));
+      const baseFont = width < 480 ? 10.5 : 11.5;
+      const fontSize = Math.round((baseFont + depthNorm * 2.2) * (isHighlighted ? 1.12 : 1));
       const text = pin.value ? `${pin.label} · ${pin.value}` : pin.label;
 
       ctx.save();
